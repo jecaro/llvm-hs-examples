@@ -14,6 +14,7 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.ByteString (ByteString)
+import Data.Fix (Fix(..))
 import qualified Data.ByteString.Char8 as BS
 import Data.Foldable
 import Data.Functor.Foldable hiding (fold)
@@ -42,6 +43,7 @@ import qualified LLVM.OrcJIT as JIT
 import qualified LLVM.Pretty as LLVMPretty
 import qualified LLVM.Relocation as Reloc
 import qualified LLVM.Target as JIT
+import Debug.Pretty.Simple
 
 -- * Core expression type
 
@@ -79,7 +81,7 @@ data ExprF a
     Cos a
   | -- | @'x'@
     Var
-  deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable, Show)
 
 type Expr = Fix ExprF
 
@@ -314,6 +316,18 @@ symbolFromProcess sym =
 resolv :: JIT.IRCompileLayer l -> JIT.SymbolResolver
 resolv cl = JIT.SymbolResolver (\sym -> JIT.findSymbol cl sym True)
 
+myResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
+myResolver ircl = JIT.SymbolResolver $ \mangled -> do
+    symbol <- JIT.findSymbol ircl mangled False
+    case symbol of
+        Right _ -> return symbol
+        Left _ -> do
+            ptr <- JIT.getSymbolAddressInProcess mangled
+            return $ Right $ JIT.JITSymbol
+                { JIT.jitSymbolAddress = ptr 
+                , JIT.jitSymbolFlags   = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True }
+                }
+
 printIR :: MonadIO m => ByteString -> m ()
 printIR = liftIO . BS.putStrLn . ("\n*** LLVM IR ***\n\n" <>)
 
@@ -337,12 +351,18 @@ withSimpleJIT expr doFun = do
               printExpr expr
               printIR asm
               JIT.withModuleKey es $ \k ->
-                JIT.withModule compileLayer k mod' $ do
-                  fSymbol <- JIT.mangleSymbol compileLayer "f"
-                  Right (JIT.JITSymbol fnAddr _) <- JIT.findSymbol compileLayer fSymbol True
-                  let f = mkDoubleFun . castPtrToFunPtr $ wordPtrToPtr fnAddr
-                  liftIO (putStrLn "*** Result ***\n")
-                  evaluate $ force (doFun f)
+                JIT.withSymbolResolver es (myResolver compileLayer) $ \sresolver -> do
+                  modifyIORef' resolvers (Map.insert k sresolver)
+                  JIT.withModule compileLayer k mod' $ do
+                    fSymbol <- JIT.mangleSymbol compileLayer "f"
+                    res <- JIT.findSymbol compileLayer fSymbol True
+                    case res of
+                      Right (JIT.JITSymbol fnAddr _) -> do
+                          JIT.findSymbol compileLayer fSymbol True
+                          let f = mkDoubleFun . castPtrToFunPtr $ wordPtrToPtr fnAddr
+                          liftIO (putStrLn "*** Result ***\n")
+                          evaluate $ force (doFun f)
+                      Left err -> error $ show err
 
 -- * Utilities
 
