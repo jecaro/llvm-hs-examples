@@ -72,17 +72,21 @@ eagerJit amod = do
           withIRCompileLayer linkingLayer tm $ \compileLayer -> do
             mainSymbol <- mangleSymbol compileLayer "add"
             asm <- moduleLLVMAssembly mod
+            -- LLVM IR here
             BS.putStrLn asm
             withModuleKey es $ \k ->
               withSymbolResolver es (SymbolResolver (resolver compileLayer)) $ \sresolver -> do
                 modifyIORef' resolvers (Map.insert k sresolver)
-                rsym <- findSymbol compileLayer mainSymbol True
-                case rsym of
-                  Left err -> do
-                    print err
-                  Right (JITSymbol mainFn _) -> do
-                    result <- mkMain (castPtrToFunPtr (wordPtrToPtr mainFn))
-                    print result
+                -- Module registration
+                withModule compileLayer k mod $ do
+                  -- Search add
+                  rsym <- findSymbol compileLayer mainSymbol True
+                  case rsym of
+                    Left err -> do
+                      print err
+                    Right (JITSymbol mainFn _) -> do
+                      result <- mkMain (castPtrToFunPtr (wordPtrToPtr mainFn))
+                      print result
 
 main :: IO ()
 main = do
