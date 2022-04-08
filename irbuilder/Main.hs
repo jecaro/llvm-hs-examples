@@ -14,6 +14,7 @@ import qualified LLVM.AST.IntegerPredicate as P
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction
+import Text.Pretty.Simple
 
 simple :: Module
 simple = buildModule "exampleModule" $ mdo
@@ -37,4 +38,4 @@ simple = buildModule "exampleModule" $ mdo
     ret r
 
 main :: IO ()
-main = print simple
+main = pPrint simple
